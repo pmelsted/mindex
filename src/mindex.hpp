@@ -11,6 +11,7 @@
 #include "KmerHashTable.hpp"
 #include "minHashIterator.hpp"
 #include "RepHash.hpp"
+#include "Kmer.hpp"
 #include "TinyVector.hpp"
 
 #ifndef KSEQ_INIT_READY
@@ -58,12 +59,9 @@ private:
 
   // <Number of ids, list of ids> -> Number of id is always right but the list of ids might have been cut off
   typedef pair<size_t, tiny_vector<size_t, tiny_vector_sz>> p_id_t;
-  typedef MinimizerHashTable<p_id_t> hmap_min_t;
+  MinimizerHashTable<vector<uint32_t>> min_table;
+  vector<vector<Minimizer>> minimizers;
 
-  typedef typename hmap_min_t::iterator hmap_min_iterator;
-  typedef typename hmap_min_t::const_iterator hmap_min_const_iterator;
-
-  hmap_min_t h_min;
 };
 
 #endif
