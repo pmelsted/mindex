@@ -33,6 +33,8 @@ struct Mindex_opt {
   size_t threads;
 
   vector<string> files;
+  vector<string> input;
+  string index;
 
   Mindex_opt() : threads(1), k(31), w(49), ratio(0.01) {}
 };
@@ -42,24 +44,28 @@ class Mindex {
 public:
 
   Mindex(const size_t k_, const size_t w_);
+  Mindex();
 
   bool build(const Mindex_opt& opt);
+  bool writeToFile(string fn, const Mindex_opt& opt) const;
+  bool loadFromFile(string fn, Mindex_opt& opt);
+
 
   inline uint64_t scramble(uint64_t x) {
     return 11400714785074694791ULL * x + 14029467366897019727ULL;
   }
-private:
+
 
   int k;
   int w;
-
+  uint64_t limit;
   bool invalid;
 
   static const int tiny_vector_sz = 1;
 
-  // <Number of ids, list of ids> -> Number of id is always right but the list of ids might have been cut off
-  typedef pair<size_t, tiny_vector<size_t, tiny_vector_sz>> p_id_t;
+  // maps minimizer -> list of ids that contain k-mer
   MinimizerHashTable<vector<uint32_t>> min_table;
+  // list (ids) of list of minimizers 
   vector<vector<Minimizer>> minimizers;
 
 };

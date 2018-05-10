@@ -119,6 +119,90 @@ bool check_ProgramOptions_build(Mindex_opt& opt) {
   return ret;
 }
 
+void parse_ProgramOptions_detect(int argc, char **argv, Mindex_opt& opt) {
+
+  const char* opt_string = "t:i:";
+
+  static struct option long_options[] = {
+
+    {"threads",         required_argument,  0, 't'},
+    {"index",           required_argument,  0, 'i'},
+    {0,                 0,                  0,  0 }
+  };
+
+  int option_index = 0, c;
+
+  while ((c = getopt_long(argc, argv, opt_string, long_options, &option_index)) != -1) {
+
+    switch (c) {
+
+    case 't':
+      opt.threads = atoi(optarg);
+      break;
+    case 'i':
+      opt.index = optarg;
+      break;
+    default:
+      break;
+    }
+  }
+
+  // all other arguments are fast[a/q] files to be read
+  while (optind < argc) opt.input.push_back(argv[optind++]);
+}
+
+bool check_ProgramOptions_detect(Mindex_opt& opt) {
+
+  bool ret = true;
+
+  size_t max_threads = std::thread::hardware_concurrency();
+
+  if (opt.threads <= 0) {
+
+    cerr << "Error: Number of threads cannot be less than or equal to 0" << endl;
+    ret = false;
+  }
+  else if (opt.threads > max_threads) {
+
+    cerr << "Warning: Number of threads cannot be greater than or equal to " << max_threads 
+    << ". Setting number of threads to " << max_threads << endl;
+    opt.threads = max_threads;
+  }
+
+  if (opt.index.empty()) {
+    cerr << "Error: Missing index" << endl;
+    ret = false;
+  } else {
+    struct stat stFileInfo;
+    int intStat = stat(opt.index.c_str(), &stFileInfo);
+    if (intStat != 0) {
+      cerr << "Error: Index is not found " << opt.index << endl;
+      ret = false;
+    }
+  }
+
+  if (opt.input.size() == 0) {
+
+    cerr << "Error: Missing FASTA/FASTQ input files" << endl;
+    ret = false;
+  } else {
+    struct stat stFileInfo;
+    vector<string>::const_iterator it;
+    int intStat;
+
+    for (const auto& it : opt.input) {  
+      intStat = stat(it.c_str(), &stFileInfo);
+
+      if (intStat != 0) {
+        cerr << "Error: File not found, " << it << endl;
+        ret = false;
+      }
+    }
+  }
+
+  return ret;
+}
+
 void Mindex_Usage() {
   std::cout << "Usage: mindex build [options] fasta-files" << std::endl << std::endl
   << "Options: " << std::endl
@@ -150,8 +234,16 @@ int main(int argc, char **argv) {
 
         mindex.build(opt);
       }
-    } else {
-
+    } else if (cmd == "detect") {
+      parse_ProgramOptions_detect(argc-1,argv+1,opt);
+      if (check_ProgramOptions_detect(opt)) {
+        Mindex mindex;
+        if (mindex.loadFromFile(opt.index, opt)) {
+          cerr << "index loaded" << endl;
+          // possibly quantify all the data
+          cerr << "Minimizers " << mindex.minimizers.size() << endl; 
+        }
+      }
     }
 
 
