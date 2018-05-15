@@ -267,6 +267,8 @@ bool Mindex::loadFromFile(string fn, Mindex_opt& opt) {
         // read basic params
         in >> opt.k >> opt.w >> limit >> nfiles;
         getline(in,line);
+        k = opt.k;
+        w = opt.w;
         Kmer::set_k(opt.k);
         Minimizer::set_g(opt.k);
         stage = 1;        
@@ -333,8 +335,6 @@ bool Mindex::loadFromFile(string fn, Mindex_opt& opt) {
 
 bool Mindex::countData(const Mindex_opt& opt) {
   // each file is independent for now
-  size_t k = opt.k;
-  size_t w = opt.w;
 
   size_t found = 0;
   // clear the counts
@@ -376,10 +376,145 @@ bool Mindex::countData(const Mindex_opt& opt) {
     kseq = nullptr;
   }
 
-  cerr << "Found " << found << " hits" << endl;
+  cerr << "Found " << found << " hits for " << counts.size() << " minimizers" << endl;
 
   //print out assignment table
   for (auto it = counts.begin(); it != count_end; ++it) {
+    if ((*it) > 1) {
+      auto x = it.getKey();
+
+      cerr << x.toString() << "\t";
+      auto it2 = min_table.find(x);
+      for (auto t : *(it2)) {
+        cerr << t << ",";
+      }
+      cerr << "\t" << *it << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool Mindex::findExistent(const Mindex_opt& opt) {
+
+  {
+    vector<Kmer> rem;
+    for (auto it = counts.begin(); it != counts.end(); ++it) {
+      if (*it <= 1) {
+        rem.push_back(it.getKey());
+      }
+    }
+    for (auto &x : rem) {
+      counts.erase(x);
+    }
+    rem.clear();
+  }
+
+  if (counts.empty()) {
+    return false;
+  }
+  size_t nfiles = minimizers.size();
+  vector<int> support(nfiles, 0);
+  vector<int> num_uniq(nfiles,0);
+  vector<int> count_uniq(nfiles,0);
+
+  auto cnt_end = counts.end();
+  auto min_end = min_table.end();
+
+  for (auto it = counts.begin(); it != cnt_end; ++it) {
+    auto x = it.getKey();
+    auto px = min_table.find(x);
+    if (px != min_end) {
+      for (auto i : *px) {
+        support[i] = 1;
+      }
+    }  
+  }
+
+  int round = 1;
+  bool done = false;
+  const int min_num_uniq = 2;
+  const double min_ratio = 0.5;
+  while (!done) {
+    done = true;
+    vector<size_t> rem;
+    // count the number of unique hits
+    for (auto it = min_table.begin(); it != min_end; ++it) {
+      auto x = it.getKey();
+      if (it->size() == 1) {
+        size_t i = (*it)[0];
+        ++num_uniq[i];
+        auto px = counts.find(x);
+        if (px != counts.end()) {
+          if (*px > 1) {
+            ++count_uniq[i];
+          }
+        }
+      }
+    }
+    
+    for (size_t i = 0; i < nfiles; i++) {
+      if (support[i] > 0) {
+        size_t c = count_uniq[i];
+        size_t nm = num_uniq[i];
+        cerr << i << "\t" << c << "\t" << nm << "\t" << c / double(nm) << endl;
+        if (nm >= 4) {
+          double ru = c / double(nm);
+          if (ru < min_ratio) {
+            rem.push_back(i);
+          }
+        }
+      }
+    }
+
+    for (auto i : rem) {
+      support[i] = 0;
+      auto v = minimizers[i]; // explicit copy
+      minimizers[i].clear();
+      for (auto x : v) {        
+        auto px = min_table.find(x);
+        if (px != min_table.end()) {
+          if (px->size() == 1) {
+            min_table.erase(px);
+            auto cx = counts.find(x);
+            if (cx != counts.end()) {
+              counts.erase(cx);
+            }
+          } else {
+            auto &t = *px;
+            // remove from min_table;
+            auto ipos = find(t.begin(), t.end(), (uint32_t) i);
+            if (ipos != t.end()) {
+              t.erase(ipos); // linear, but who cares
+            }
+          }
+        }
+      }
+    }
+
+    done = rem.empty();
+    ++round;
+    if (!done) {
+      cerr << "Round " << round << ", removed " << rem.size() << " entries, count size = " << min_table.size() << endl;
+    }
+  }
+  cerr << endl;
+
+
+  cerr << "Entries with support" << endl;
+  int supp= 0;
+  for (size_t i = 0; i < nfiles; i++) {
+    if (support[i] > 0) {
+      supp++;
+      cerr << i << "\n";
+    }
+  }
+  cerr << endl;
+  cerr << "Total of " << supp << " entries" << endl;
+
+  //print out assignment table
+  cnt_end = counts.end();
+  for (auto it = counts.begin(); it != cnt_end; ++it) {
     if ((*it) > 1) {
       auto x = it.getKey();
 
@@ -400,7 +535,7 @@ bool Mindex::probData(vector<double> &prob, const Mindex_opt& opt) {
   prob.clear();
   prob.resize(opt.files.size());
   if (counts.empty()) {
-    return false; 
+    return false;
   }
 
   // figure out how to estimate the probability

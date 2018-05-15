@@ -50,6 +50,7 @@ public:
 
   bool build(const Mindex_opt& opt);
   bool countData(const Mindex_opt& opt);
+  bool findExistent(const Mindex_opt& opt);
   bool probData(vector<double> &prob, const Mindex_opt& opt);
   bool writeToFile(string fn, const Mindex_opt& opt) const;
   bool loadFromFile(string fn, Mindex_opt& opt);

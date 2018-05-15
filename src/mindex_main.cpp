@@ -249,8 +249,9 @@ int main(int argc, char **argv) {
         if (mindex.loadFromFile(opt.index, opt)) {
           cerr << "index loaded" << endl;
           // possibly quantify all the data
-          cerr << "Minimizers " << mindex.minimizers.size() << endl; 
+          cerr << "Minimizers " << mindex.min_table.size() << endl; 
           mindex.countData(opt);
+          mindex.findExistent(opt);
         }
       }
     }     
