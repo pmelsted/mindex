@@ -2,6 +2,7 @@
 #include <fstream>
 #include <algorithm>
 #include <sstream>
+#include <unordered_set>
 
 Mindex::Mindex(const size_t k_, const size_t w_): k(k_), w(w_), invalid(false) {}
 Mindex::Mindex(): invalid(true) {}
@@ -17,7 +18,7 @@ bool Mindex::build(const Mindex_opt& opt) {
   minimizers.resize(opt.files.size());  
 
   // Main worker thread
-  auto minz_worker_function = [&](const vector<string>& vseq, vector<Minimizer> &out) {
+  auto minz_worker_function = [&](const vector<string>& vseq, vector<Kmer> &out) {
 
     for (const auto &seq : vseq) {
       const char* str = seq.c_str();
@@ -30,12 +31,17 @@ bool Mindex::build(const Mindex_opt& opt) {
       for (; it_min != it_min_end; ++it_min) {
         // downsample by a factor of r      
         uint64_t h = it_min.getHash();
-        if (lasthash != h && scramble(h) <= limit) {             
-          out.push_back(Minimizer(seq.c_str() + it_min.getPosition()).rep());
+        if (lasthash != h && scramble(h) <= limit) {           
+          auto x = Kmer(seq.c_str() + it_min.getPosition()).rep();
+          out.push_back(x);
           lasthash = h;
         }
-      }
+      }      
     }
+
+    unordered_set<Kmer, KmerHash> tmp(out.begin(), out.end());
+    out.clear();
+    out.assign(tmp.begin(), tmp.end());
   };
 
   // goes through every file in batched mode
@@ -68,58 +74,43 @@ bool Mindex::build(const Mindex_opt& opt) {
     }
   }
 
-  // figure out what to do with output
   for (auto &x : minimizers) {
     num_min += x.size();
   }
   cerr << "Number of files: " << nfiles <<", number of sequences: " << nseq << ", total bp: " << sseq  << std::endl;
-  cerr << "Number of minimizers inserted: " << num_min << endl;
+  cerr << "Number of minimizers considered: " << num_min << endl;
 
   // count the number of occurrances for each minimizer
-  MinimizerHashTable<uint32_t> occ_table;
+  KmerHashTable<uint32_t> occ_table;
   occ_table.reserve(num_min);
   for (const auto &minv : minimizers) {
-    vector<Minimizer> cp(minv);
-    std::sort(cp.begin(), cp.end());
-    auto last = unique(cp.begin(), cp.end());
-    cp.erase(last, cp.end());
-    for (const auto x : cp) {
+    for (const auto x : minv) {      
       auto it = occ_table.find(x);
       if (it != occ_table.end()) {
         (*it)++;
       } else {
         occ_table.insert(x,1);
       }
-    }    
+    }  
   }
 
-  uint32_t maxocc = 0;
+  uint32_t maxocc = 0;  
   for (const auto &x : occ_table) {
     if (maxocc < x) {
       maxocc = x;
     }
   }
 
-  /*
-  vector<int> histo(maxocc+1);
-  for (const auto &x : occ_table) {
-    ++histo[x];
-  }  
+  size_t K = opt.K;
+  size_t max_deg =  (opt.maxdeg <= 0) ? maxocc : opt.maxdeg;
 
-  cerr << "Histogram:" << std::endl;
-  for (uint32_t i =0; i <= maxocc; i++) {
-    cerr << i << "\t" << histo[i] << "\n";
+  if (max_deg < maxocc) {
+    // maybe: clean up unneccessary minimizers, maybe remove options
   }
-  cerr << std::endl;
-  */
-
-  // TODO: make this an option and figure out better defaults
-  size_t K = 100;
-  size_t max_deg = maxocc;
 
   vector<size_t> degree(nfiles);
-  vector<vector<pair<size_t,Minimizer>>> full_minimizers(nfiles);
-  auto deg_sorter = [&](const pair<size_t,Minimizer>& a, const pair<size_t,Minimizer>& b) -> bool {
+  vector<vector<pair<size_t,Kmer>>> full_minimizers(nfiles);
+  auto deg_sorter = [&](const pair<size_t,Kmer>& a, const pair<size_t,Kmer>& b) -> bool {
       return a.first < b.first; // sort by degree
     };
 
@@ -136,22 +127,23 @@ bool Mindex::build(const Mindex_opt& opt) {
     minimizers[i].clear();
   }
 
+  occ_table.clear(); // not needed again
+
   // minimizers is empty, full_minimizers contains all info needed
-  
   // basic strategy, start with unique
   int num_ins = 0;
   for (size_t i = 0; i < nfiles; i++) {
     for (auto &x : full_minimizers[i]) {
       if (x.first == 1) {
-        minimizers[i].push_back(x.second);
         degree[i]++;
         num_ins++;
         min_table.insert(x.second, {(uint32_t)i});
+      } else {
+        break; // exit early
       }
     }
   }
   cerr << "degree " << 1 << ", inserted " << num_ins << " minimizers" << endl;
-
 
   // greedy strategy, prioritize by degree, pick all that are needed
   bool done = false;
@@ -159,25 +151,44 @@ bool Mindex::build(const Mindex_opt& opt) {
   while (!done && deg <= max_deg) {
     num_ins = 0;
     done = true;
+    // go throught every file and see if we need to insert
     for (size_t i = 0; i < nfiles; i++) {
       if (degree[i] < K) {
         done = false;
         const auto &v = full_minimizers[i];
         // for each minimizer of degree deg
-        auto start = lower_bound(v.begin(), v.end(), make_pair(deg,Minimizer()), deg_sorter);
-        for (; start != v.end(); ++start) {
+        int goal = (int) (K - degree[i]);
+        auto start = lower_bound(v.begin(), v.end(), make_pair(deg,Kmer()), deg_sorter);
+        for (; start != v.end() && goal > 0 ; ++start) {
           if (start->first > deg) {
             break;
           }
           auto x = start->second;
-          degree[i]++;
-          num_ins++;
-          minimizers[i].push_back(x);
+          goal--;
           auto px = min_table.find(x);
           if (px == min_table.end()) {
             // newly inserted
-            min_table.insert(x, {(uint32_t)i});
-          } 
+            min_table.insert(x, {});
+          }
+        }
+      }
+    }
+
+    for (size_t i = 0; i < nfiles; i++) {
+      const auto &v = full_minimizers[i];
+      // for each minimizer of degree deg    
+      auto start = lower_bound(v.begin(), v.end(), make_pair(deg,Kmer()), deg_sorter);
+      for (; start != v.end(); ++start) {
+        if (start->first > deg) {
+          break;
+        }
+        auto x = start->second;
+        auto px = min_table.find(x);
+        if (px != min_table.end()) {
+          minimizers[i].push_back(x);
+          px->push_back(i);
+          degree[i]++;
+          num_ins++;
         }
       }
     }
@@ -189,40 +200,25 @@ bool Mindex::build(const Mindex_opt& opt) {
     cerr << "Impossible to fill table, increase max_deg and retry" << endl;
   }
   
+  // check statistics
   size_t sdeg = 0;
   for (size_t i = 0; i < nfiles; i++) {
-    //cerr << i << "\t" << degree[i] << "\n";
     sdeg += degree[i];
   }
-  cerr << endl;
-  cerr << "Inserted " << min_table.size() <<   " minimizers into the graph " << endl;
-
-
-  for (auto &x : min_table) {
-    x.clear();
-  }
-
-  for (size_t i = 0; i < nfiles; i++) {
-    for (const auto &x : minimizers[i]) {
-      auto px = min_table.find(x);
-      if (px == min_table.end()) {
-        cerr << "Error" << endl;
-        return false;
-      }
-      px->push_back((uint32_t)i);
-    }
-  }
-
   size_t sdeg2 = 0;
   for (auto x : min_table) {
     sdeg2 += x.size();
   }
+
+  // fix the minimizers
+  full_minimizers.clear();
+
+  cerr << endl;
+  cerr << "Inserted " << min_table.size() <<   " minimizers into the graph " << endl;
+
+  
   cerr << "Left degree = " << sdeg << ", right degree " << sdeg2 << endl;
   
-  // TODO write to index and take output as option
-
-  
-
   return writeToFile("index.txt", opt);;
 }
 
@@ -297,7 +293,7 @@ bool Mindex::loadFromFile(string fn, Mindex_opt& opt) {
           auto &v = minimizers[i];
           for (size_t j = 0; j < num; j++) {
             getline(in,line);
-            v.push_back(Minimizer(line.c_str()));
+            v.push_back(Kmer(line.c_str()));
           }
         }
         stage = 3;
@@ -312,13 +308,14 @@ bool Mindex::loadFromFile(string fn, Mindex_opt& opt) {
           getline(in,line);
           stringstream ss(line);
           ss >> tl >> sz;
-          Minimizer x(tl.c_str());
+          Kmer x(tl.c_str());
           auto p = min_table.insert(x, {});
           auto &v = *(p.first);
           v.reserve(sz);
           uint32_t t;
           for (size_t j = 0; j < sz; j++) {
             in >> t;
+            getline(in,line);
             v.push_back(t);
           }          
         }
@@ -332,4 +329,81 @@ bool Mindex::loadFromFile(string fn, Mindex_opt& opt) {
     invalid = false;
   }
   return !invalid;
+}
+
+bool Mindex::countData(const Mindex_opt& opt) {
+  // each file is independent for now
+  size_t k = opt.k;
+  size_t w = opt.w;
+
+  size_t found = 0;
+  // clear the counts
+  counts.clear();
+  counts.reserve(min_table.size());
+  auto it_end = min_table.end();
+  for (auto it = min_table.begin(); it != it_end; ++it) {
+    counts.insert(it.getKey(), 0);
+  }
+
+  auto count_end = counts.end();
+  minHashIterator<RepHash> it_min(w,k,RepHash()), it_min_end;
+  for (auto fn : opt.input) {
+    gzFile fp = gzopen(fn.c_str(), "r");
+    kseq_t* kseq = kseq_init(fp);
+
+    int r;
+    while ((r = kseq_read(kseq)) >= 0) {
+      const char *seq = kseq->seq.s;
+      it_min.initString(kseq->seq.s, kseq->seq.l);
+      uint64_t lasthash = it_min.getHash()+1;
+      // for every minimizer in the sequence
+      for (; it_min != it_min_end; ++it_min) {
+        // downsample by a factor of r      
+        uint64_t h = it_min.getHash();
+        if (lasthash != h && scramble(h) <= limit) {             
+          // check if we find this
+          lasthash = h;
+          auto it = counts.find(Kmer(seq + it_min.getPosition()).rep());
+          if (it != count_end) {
+            ++(*it);   
+            ++found;       
+          }          
+        }
+      }
+    }
+    kseq_destroy(kseq);
+    gzclose(fp);
+    kseq = nullptr;
+  }
+
+  cerr << "Found " << found << " hits" << endl;
+
+  //print out assignment table
+  for (auto it = counts.begin(); it != count_end; ++it) {
+    if ((*it) > 1) {
+      auto x = it.getKey();
+
+      cerr << x.toString() << "\t";
+      auto it2 = min_table.find(x);
+      for (auto t : *(it2)) {
+        cerr << t << ",";
+      }
+      cerr << "\t" << *it << "\n";
+    }
+  }
+
+  return true;
+}
+
+bool Mindex::probData(vector<double> &prob, const Mindex_opt& opt) {
+  // returns the probability of presence for each id
+  prob.clear();
+  prob.resize(opt.files.size());
+  if (counts.empty()) {
+    return false; 
+  }
+
+  // figure out how to estimate the probability
+
+  return true;
 }

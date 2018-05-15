@@ -28,6 +28,8 @@ struct Mindex_opt {
   bool verbose;
   double ratio;
 
+  size_t K;
+  size_t maxdeg;
   size_t k;
   size_t w;
   size_t threads;
@@ -36,7 +38,7 @@ struct Mindex_opt {
   vector<string> input;
   string index;
 
-  Mindex_opt() : threads(1), k(31), w(49), ratio(0.01) {}
+  Mindex_opt() : threads(1), k(31), K(100), maxdeg(0), w(49), ratio(0.01) {}
 };
 
 class Mindex {
@@ -47,6 +49,8 @@ public:
   Mindex();
 
   bool build(const Mindex_opt& opt);
+  bool countData(const Mindex_opt& opt);
+  bool probData(vector<double> &prob, const Mindex_opt& opt);
   bool writeToFile(string fn, const Mindex_opt& opt) const;
   bool loadFromFile(string fn, Mindex_opt& opt);
 
@@ -64,9 +68,11 @@ public:
   static const int tiny_vector_sz = 1;
 
   // maps minimizer -> list of ids that contain k-mer
-  MinimizerHashTable<vector<uint32_t>> min_table;
-  // list (ids) of list of minimizers 
-  vector<vector<Minimizer>> minimizers;
+  KmerHashTable<vector<uint32_t>> min_table;
+  // maps minimizer -> number of times seen
+  KmerHashTable<uint32_t> counts;
+  // list (ids) of list of minimizers for each id
+  vector<vector<Kmer>> minimizers;
 
 };
 

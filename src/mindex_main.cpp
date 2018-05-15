@@ -16,7 +16,9 @@ void parse_ProgramOptions_build(int argc, char **argv, Mindex_opt& opt) {
 
     {"threads",         required_argument,  0, 't'},
     {"kmer-length",     required_argument,  0, 'k'},
-    {"window",      required_argument,  0, 'w'},
+    {"window",          required_argument,  0, 'w'}, 
+    {"max-deg",         required_argument,  0, 'm'}, 
+    {"left-deg",        required_argument,  0, 'l'}, 
     {"ratio-gmers",     required_argument,  0, 'r'},
     {0,                 0,                  0,  0 }
   };
@@ -38,6 +40,12 @@ void parse_ProgramOptions_build(int argc, char **argv, Mindex_opt& opt) {
       break;
     case 'r':
       opt.ratio = atof(optarg);
+      break;
+    case 'l':
+      opt.K = atoi(optarg);
+      break;
+    case 'm':
+      opt.maxdeg = atoi(optarg);
       break;
     default:
       break;
@@ -228,7 +236,7 @@ int main(int argc, char **argv) {
       parse_ProgramOptions_build(argc-1, argv+1, opt);
       if (check_ProgramOptions_build(opt)) { //Program options are valid
         Kmer::set_k(opt.k);
-        Minimizer::set_g(opt.k);
+        //Minimizer::set_g(opt.k);
 
         Mindex mindex(opt.k, opt.w);
 
@@ -242,11 +250,9 @@ int main(int argc, char **argv) {
           cerr << "index loaded" << endl;
           // possibly quantify all the data
           cerr << "Minimizers " << mindex.minimizers.size() << endl; 
+          mindex.countData(opt);
         }
       }
-    }
-
-
-     
+    }     
   }
 }
