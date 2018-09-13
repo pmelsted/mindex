@@ -10,7 +10,7 @@
 
 void parse_ProgramOptions_build(int argc, char **argv, Mindex_opt& opt) {
 
-  const char* opt_string = "t:k:w:r:";
+  const char* opt_string = "t:k:w:r:l:";
 
   static struct option long_options[] = {
 
@@ -251,7 +251,11 @@ int main(int argc, char **argv) {
           // possibly quantify all the data
           cerr << "Minimizers " << mindex.min_table.size() << endl; 
           mindex.countData(opt);
-          mindex.findExistent(opt);
+          vector<int> present;
+          mindex.findExistent(opt,present);
+          for (auto i : present) {
+            std::cout << i << "\t" << opt.files[i] << "\n";
+          }
         }
       }
     }     

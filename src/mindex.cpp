@@ -136,6 +136,9 @@ bool Mindex::build(const Mindex_opt& opt) {
     for (auto &x : full_minimizers[i]) {
       if (x.first == 1) {
         degree[i]++;
+        if (degree[i] >= K) {
+          break;
+        }
         num_ins++;
         min_table.insert(x.second, {(uint32_t)i});
       } else {
@@ -379,6 +382,7 @@ bool Mindex::countData(const Mindex_opt& opt) {
   cerr << "Found " << found << " hits for " << counts.size() << " minimizers" << endl;
 
   //print out assignment table
+  /*
   for (auto it = counts.begin(); it != count_end; ++it) {
     if ((*it) > 1) {
       auto x = it.getKey();
@@ -391,12 +395,13 @@ bool Mindex::countData(const Mindex_opt& opt) {
       cerr << "\t" << *it << "\n";
     }
   }
+  */
 
   return true;
 }
 
-bool Mindex::findExistent(const Mindex_opt& opt) {
-
+bool Mindex::findExistent(const Mindex_opt& opt, vector<int>& present) {
+  // remove k-mers found with little support
   {
     vector<Kmer> rem;
     for (auto it = counts.begin(); it != counts.end(); ++it) {
@@ -415,6 +420,7 @@ bool Mindex::findExistent(const Mindex_opt& opt) {
   }
   size_t nfiles = minimizers.size();
   vector<int> support(nfiles, 0);
+  vector<int> max_support(nfiles,0);
   vector<int> num_uniq(nfiles,0);
   vector<int> count_uniq(nfiles,0);
 
@@ -427,6 +433,7 @@ bool Mindex::findExistent(const Mindex_opt& opt) {
     if (px != min_end) {
       for (auto i : *px) {
         support[i] = 1;
+        max_support[i]++;
       }
     }  
   }
@@ -434,15 +441,20 @@ bool Mindex::findExistent(const Mindex_opt& opt) {
   int round = 1;
   bool done = false;
   const int min_num_uniq = 2;
-  const double min_ratio = 0.5;
+  const double min_uniq_ratio = 0.5;
+  const double min_ratio = 0.75;
   while (!done) {
     done = true;
     vector<size_t> rem;
+    // clear max_support
+    for (auto &x : max_support) {
+      x = 0;
+    }
     // count the number of unique hits
     for (auto it = min_table.begin(); it != min_end; ++it) {
-      auto x = it.getKey();
+      auto x = it.getKey();      
       if (it->size() == 1) {
-        size_t i = (*it)[0];
+        size_t i = (*it)[0];        
         ++num_uniq[i];
         auto px = counts.find(x);
         if (px != counts.end()) {
@@ -451,18 +463,29 @@ bool Mindex::findExistent(const Mindex_opt& opt) {
           }
         }
       }
+      for (auto& i : *it) {
+        if (support[i] > 0) {
+          max_support[i]++;
+        }
+      }
     }
     
+    // remove things 
     for (size_t i = 0; i < nfiles; i++) {
       if (support[i] > 0) {
+        // remove if too few unique k-mers are missing
         size_t c = count_uniq[i];
         size_t nm = num_uniq[i];
-        cerr << i << "\t" << c << "\t" << nm << "\t" << c / double(nm) << endl;
+        //cerr << i << "\t" << c << "\t" << nm << "\t" << c / double(nm) << endl;
         if (nm >= 4) {
           double ru = c / double(nm);
-          if (ru < min_ratio) {
+          if (ru < min_uniq_ratio) {
             rem.push_back(i);
           }
+        }
+        // remove if max_support is too small
+        if (max_support[i] / double(minimizers[i].size()) < min_ratio) {
+          rem.push_back(i);
         }
       }
     }
@@ -511,24 +534,36 @@ bool Mindex::findExistent(const Mindex_opt& opt) {
   }
   cerr << endl;
   cerr << "Total of " << supp << " entries" << endl;
+  
 
+  for (size_t i = 0; i < nfiles; i++) {
+    if (support[i] > 0) {
+      present.push_back(i);
+    }
+  }
+ 
   //print out assignment table
   cnt_end = counts.end();
   for (auto it = counts.begin(); it != cnt_end; ++it) {
     if ((*it) > 1) {
       auto x = it.getKey();
 
+      /*
       cerr << x.toString() << "\t";
       auto it2 = min_table.find(x);
       for (auto t : *(it2)) {
         cerr << t << ",";
       }
       cerr << "\t" << *it << "\n";
+      */
     }
   }
 
+  
   return true;
 }
+
+
 
 bool Mindex::probData(vector<double> &prob, const Mindex_opt& opt) {
   // returns the probability of presence for each id
